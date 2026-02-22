@@ -3,8 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.metrics.global_dim import participation_ratio
 from src.metrics.lid_estimators import abid_local_batch, lid_mle_batch, twonn_global_id
@@ -21,13 +26,24 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     x = np.load(args.embeddings)
+    if x.ndim != 2:
+        raise ValueError("Embeddings must be a 2D array (n_samples, n_features).")
+    n_samples = int(x.shape[0])
+    if n_samples < 3:
+        raise ValueError(
+            "Need at least 3 embedding samples to compute LID/TwoNN robustly. "
+            "Increase generated tokens or use a richer trace."
+        )
+
+    k_eff = max(2, min(args.k, n_samples - 1))
     summary = {
-        "n_samples": int(x.shape[0]),
+        "n_samples": n_samples,
         "n_features": int(x.shape[1]),
-        "k": args.k,
-        "lid_mle_mean": float(np.mean(lid_mle_batch(x, k=args.k))),
+        "k_requested": args.k,
+        "k_effective": k_eff,
+        "lid_mle_mean": float(np.mean(lid_mle_batch(x, k=k_eff))),
         "twonn_global_id": float(twonn_global_id(x)),
-        "abid_mean": float(np.mean(abid_local_batch(x, k=args.k))),
+        "abid_mean": float(np.mean(abid_local_batch(x, k=k_eff))),
         "participation_ratio": float(participation_ratio(x)),
     }
 

@@ -7,6 +7,11 @@ import numpy as np
 import torch
 
 
+def split_steps(generated_text: str) -> list[str]:
+    chunks = re.split(r"(?=Step\s+\d+\s*:)", generated_text, flags=re.IGNORECASE)
+    return [c.strip() for c in chunks if c.strip()]
+
+
 def find_step_boundaries(text: str) -> list[dict[str, int]]:
     """Return char ranges for `Step N:` blocks in generated text."""
     step_pattern = re.compile(r"(Step\s+\d+\s*:)", re.IGNORECASE)

@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.evaluation.sympy_judge import judge_step_equational_consistency
+from src.generation.extraction import split_steps
 
 
 def parse_args() -> argparse.Namespace:
@@ -13,11 +18,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--in", dest="input_path", required=True, help="Generation trace JSON path")
     parser.add_argument("--out", default="results/judged_trace.json", help="Output JSON path")
     return parser.parse_args()
-
-
-def split_steps(generated_text: str) -> list[str]:
-    chunks = re.split(r"(?=Step\s+\d+\s*:)", generated_text, flags=re.IGNORECASE)
-    return [c.strip() for c in chunks if c.strip()]
 
 
 def main() -> None:

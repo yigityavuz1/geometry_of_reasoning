@@ -19,9 +19,10 @@ def lid_mle_batch(x: np.ndarray, k: int = 20) -> np.ndarray:
         raise ValueError("k must satisfy 2 <= k < n_samples.")
 
     dists = _sorted_neighbor_distances(x)
-    tk = dists[:, k - 1]
-    top = np.log((tk[:, None] / dists[:, : k - 1]).clip(min=1e-12))
-    denom = np.mean(top, axis=1)
+    local = np.clip(dists[:, :k], 1e-12, None)
+    tk = local[:, -1]
+    ratios = np.clip(tk[:, None] / local[:, : k - 1], 1.0 + 1e-12, None)
+    denom = np.mean(np.log(ratios), axis=1)
     return 1.0 / np.clip(denom, 1e-12, None)
 
 
@@ -33,8 +34,8 @@ def twonn_global_id(x: np.ndarray) -> float:
         raise ValueError("TwoNN requires at least 3 samples.")
 
     dists = _sorted_neighbor_distances(x)
-    r1 = dists[:, 0]
-    r2 = dists[:, 1]
+    r1 = np.clip(dists[:, 0], 1e-12, None)
+    r2 = np.clip(dists[:, 1], 1e-12, None)
     mu = (r2 / np.clip(r1, 1e-12, None)).clip(min=1.0 + 1e-12)
     return float(1.0 / np.mean(np.log(mu)))
 

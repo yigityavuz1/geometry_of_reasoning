@@ -109,3 +109,82 @@ Her kayit asagidaki sirayi takip eder:
 - Implement: GSM8K ornekleri uzerinde generation-to-judge veri hatti.
 - Refactor: ABID estimator'i paper-faithful formulasyona yaklastir.
 - Implement: hidden-state layer hooks ve parquet output.
+
+### LOG-20260222-02
+
+**Context**
+- Poetry ortamini gercekten calistirip tek GSM8K ornegi icin generation -> judge -> metrics zincirini end-to-end kosmak.
+
+**Scope**
+- Faz 1 (altyapi dogrulama) + Faz 2/3'e gecis niteliginde smoke calisma
+- Script import stabilitesi
+- Device secimi stabilitesi (Mac MPS riski)
+
+**Files Touched**
+- `pyproject.toml`
+- `src/generation/extraction.py`
+- `src/generation/runner.py`
+- `src/metrics/lid_estimators.py`
+- `scripts/run_generation.py`
+- `scripts/run_judge.py`
+- `scripts/run_metrics.py`
+- `scripts/run_ablation.py`
+- `scripts/run_smoke_gsm8k_pipeline.py`
+- `README.md`
+- `docs/development-logs.md`
+
+**Implementation Details**
+- Poetry kurulumunda platform uyumlulugu icin `bitsandbytes` Linux-marker ile sinirlandi.
+- `run_smoke_gsm8k_pipeline.py` eklendi:
+  - `openai/gsm8k` tek ornek yukleme
+  - generation
+  - step-level SymPy judge
+  - token embedding kaydi
+  - metrik ozet cikisi
+- Generation trace'e token-embedding cikarma ve entropy ozeti eklendi.
+- Scriptlerin tamamina repo-root `sys.path` bootstrap eklendi; `PYTHONPATH` mecburiyeti kaldirildi.
+- LID kestiriminde sifir-mesafe kaynakli `NaN/inf` sorununa karsi numerik stabilizasyon eklendi.
+- Cihaz secimi iyilestirildi:
+  - Varsayilan: `cuda` varsa onu kullan, yoksa `cpu`
+  - `GOR_DEVICE={cpu|cuda|mps}` ile manuel override
+  - Apple MPS default'u kaldirildi (stabilite icin)
+
+**Decisions**
+- Smoke demonstrasyonu icin `sshleifer/tiny-gpt2` kullanildi (hizli dogrulama amacli).
+- MPS'in buyuk modelde (`Qwen2.5-0.5B-Instruct`) `NDArray > 2**32` hatasi nedeniyle default secim CPU'ya cekildi.
+- Daha temsilci smoke sonucu icin ek olarak `GOR_DEVICE=cpu` ile `Qwen/Qwen2.5-0.5B-Instruct` kosusu alindi.
+- End-to-end smoke scripti, fazlar arasi entegrasyon dogrulama araci olarak kabul edildi.
+
+**Validation**
+- `poetry env use /opt/homebrew/bin/python3.11` + `poetry install` basarili.
+- `poetry run python scripts/run_smoke_gsm8k_pipeline.py --model sshleifer/tiny-gpt2 ...` basarili.
+- Uretilen artefaktlar:
+  - `results/smoke_tiny/generation_trace.json`
+  - `results/smoke_tiny/judged_trace.json`
+  - `results/smoke_tiny/token_embeddings.npy`
+  - `results/smoke_tiny/metrics_summary.json`
+- Asama scriptleri ayri ayri da dogrulandi:
+  - `scripts/run_judge.py` basarili
+  - `scripts/run_metrics.py` basarili
+- `GOR_DEVICE=cpu poetry run python scripts/run_smoke_gsm8k_pipeline.py --model Qwen/Qwen2.5-0.5B-Instruct ...` basarili.
+- Qwen smoke metrik ozeti:
+  - `lid_mle_mean`: `7.2459`
+  - `twonn_global_id`: `4.6831`
+  - `abid_mean`: `28.1844`
+  - `participation_ratio`: `11.7677`
+- Qwen smoke cikti dosyalari:
+  - `results/smoke_qwen05_cpu/generation_trace.json`
+  - `results/smoke_qwen05_cpu/judged_trace.json`
+  - `results/smoke_qwen05_cpu/token_embeddings.npy`
+  - `results/smoke_qwen05_cpu/metrics_summary.json`
+- `python3 -m compileall src scripts` basarili.
+
+**Known Gaps / Risks**
+- Tiny model step-format uretmiyor; judge ciktisi anlamli matematiksel CoT yerine parse-fail verebiliyor.
+- `abid_mean` degeri model/cikti kalitesine gore oynak; arastirma sunumu oncesi normalize/robust varyant gerekebilir.
+- `Qwen2.5-0.5B-Instruct` MPS'te bellek limiti nedeniyle bu makinede dogrudan stabil degil.
+
+**Next Actions**
+- Implement: step boundary bazli gercek hidden-state toplama (token-level yerine step aggregation).
+- Refactor: SymPy judge'i task-correctness seviyesine yaklastir (sadece equation consistency degil).
+- Implement: Faz 2 icin parse-fail analizi ve normalize katmani.

@@ -11,7 +11,7 @@ python = ">=3.11,<3.13"
 torch = "*"
 transformers = "*"
 accelerate = "*"
-bitsandbytes = "*"
+bitsandbytes = { version = "*", markers = "platform_system == 'Linux'" }
 datasets = "*"
 numpy = "*"
 scipy = "*"
