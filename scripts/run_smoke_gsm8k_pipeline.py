@@ -12,7 +12,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.evaluation.sympy_judge import judge_step_equational_consistency
+from src.evaluation.sympy_judge import (
+    build_task_reference,
+    judge_step_equational_consistency,
+    judge_step_task_correctness,
+    summarize_judgement_records,
+)
 from src.generation.extraction import split_steps
 from src.generation.runner import GenerationConfig, generate_reasoning_trace
 from src.metrics.global_dim import participation_ratio
@@ -32,11 +37,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def build_step_judgements(generated_text: str) -> list[dict[str, object]]:
+def build_step_judgements(
+    generated_text: str,
+    question: str,
+    gold_answer: str,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
     steps = split_steps(generated_text)
+    reference = build_task_reference(question, gold_answer) if question and gold_answer else None
     judged_steps: list[dict[str, object]] = []
     for idx, step_text in enumerate(steps, start=1):
-        j = judge_step_equational_consistency(step_text)
+        if reference is not None:
+            j = judge_step_task_correctness(step_text, reference)
+        else:
+            j = judge_step_equational_consistency(step_text)
         judged_steps.append(
             {
                 "step_index": idx,
@@ -44,9 +57,10 @@ def build_step_judgements(generated_text: str) -> list[dict[str, object]]:
                 "is_correct": j.is_correct,
                 "parse_fail": j.parse_fail,
                 "reason": j.reason,
+                "matched_values": j.matched_values or [],
             }
         )
-    return judged_steps
+    return judged_steps, summarize_judgement_records(judged_steps)
 
 
 def main() -> None:
@@ -74,8 +88,14 @@ def main() -> None:
     generation_path = out_dir / "generation_trace.json"
     generation_path.write_text(json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    judged_steps, judge_summary = build_step_judgements(
+        trace.get("generated_text", ""),
+        question,
+        gold_answer,
+    )
     judged_trace = dict(trace)
-    judged_trace["judged_steps"] = build_step_judgements(trace.get("generated_text", ""))
+    judged_trace["judged_steps"] = judged_steps
+    judged_trace["judge_summary"] = judge_summary
     judged_path = out_dir / "judged_trace.json"
     judged_path.write_text(json.dumps(judged_trace, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -86,6 +106,8 @@ def main() -> None:
         "n_samples": int(token_embeddings.shape[0]) if token_embeddings.ndim == 2 else 0,
         "n_features": int(token_embeddings.shape[1]) if token_embeddings.ndim == 2 else 0,
         "k_requested": int(args.k),
+        "judge_parse_fail_rate": judge_summary["parse_fail_rate"],
+        "judge_correct_rate": judge_summary["correct_rate"],
     }
     if token_embeddings.ndim == 2 and token_embeddings.shape[0] >= 3:
         k_eff = max(2, min(args.k, int(token_embeddings.shape[0]) - 1))

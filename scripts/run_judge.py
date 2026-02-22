@@ -9,7 +9,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.evaluation.sympy_judge import judge_step_equational_consistency
+from src.evaluation.sympy_judge import (
+    build_task_reference,
+    judge_step_equational_consistency,
+    judge_step_task_correctness,
+    summarize_judgement_records,
+)
 from src.generation.extraction import split_steps
 
 
@@ -24,10 +29,16 @@ def main() -> None:
     args = parse_args()
     trace = json.loads(Path(args.input_path).read_text(encoding="utf-8"))
     steps = split_steps(trace.get("generated_text", ""))
+    question = str(trace.get("prompt", ""))
+    gold_answer = str(trace.get("gold_answer", ""))
+    reference = build_task_reference(question, gold_answer) if question and gold_answer else None
 
     judged_steps = []
     for idx, step_text in enumerate(steps, start=1):
-        judgement = judge_step_equational_consistency(step_text)
+        if reference is not None:
+            judgement = judge_step_task_correctness(step_text, reference)
+        else:
+            judgement = judge_step_equational_consistency(step_text)
         judged_steps.append(
             {
                 "step_index": idx,
@@ -35,10 +46,12 @@ def main() -> None:
                 "is_correct": judgement.is_correct,
                 "parse_fail": judgement.parse_fail,
                 "reason": judgement.reason,
+                "matched_values": judgement.matched_values or [],
             }
         )
 
     trace["judged_steps"] = judged_steps
+    trace["judge_summary"] = summarize_judgement_records(judged_steps)
     output_path = Path(args.out)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8")

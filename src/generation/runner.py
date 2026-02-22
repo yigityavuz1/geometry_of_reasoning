@@ -8,6 +8,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.generation.extraction import (
+    entropy_from_logits,
+    estimate_step_token_spans,
     find_step_boundaries,
     split_steps,
     summarize_token_entropies,
@@ -22,6 +24,7 @@ class GenerationConfig:
     top_p: float = 0.95
     do_sample: bool = False
     collect_token_embeddings: bool = False
+    collect_step_signals: bool = False
 
 
 def _build_step_prompt(user_prompt: str) -> str:
@@ -65,8 +68,17 @@ def load_model_and_tokenizer(model_name: str) -> tuple[Any, Any]:
     return model, tokenizer
 
 
-def generate_reasoning_trace(prompt: str, cfg: GenerationConfig) -> dict[str, Any]:
-    model, tokenizer = load_model_and_tokenizer(cfg.model_name)
+def generate_reasoning_trace(
+    prompt: str,
+    cfg: GenerationConfig,
+    model: Any | None = None,
+    tokenizer: Any | None = None,
+) -> dict[str, Any]:
+    if (model is None) != (tokenizer is None):
+        raise ValueError("Pass both `model` and `tokenizer`, or neither.")
+    if model is None or tokenizer is None:
+        model, tokenizer = load_model_and_tokenizer(cfg.model_name)
+
     device = next(model.parameters()).device
     text_prompt = _build_step_prompt(prompt)
     inputs = tokenizer(text_prompt, return_tensors="pt")
@@ -84,7 +96,7 @@ def generate_reasoning_trace(prompt: str, cfg: GenerationConfig) -> dict[str, An
         )
 
     full_text = tokenizer.decode(output.sequences[0], skip_special_tokens=True)
-    generated_text = full_text[len(text_prompt) :].strip() if full_text.startswith(text_prompt) else full_text
+    generated_text = full_text[len(text_prompt) :] if full_text.startswith(text_prompt) else full_text
     boundaries = find_step_boundaries(generated_text)
     steps = split_steps(generated_text)
     entropy_summary = summarize_token_entropies(output.scores)
@@ -99,7 +111,9 @@ def generate_reasoning_trace(prompt: str, cfg: GenerationConfig) -> dict[str, An
         "entropy_summary": entropy_summary,
     }
 
-    if cfg.collect_token_embeddings:
+    completion_hidden: torch.Tensor | None = None
+    prompt_token_count = int(inputs["input_ids"].shape[-1])
+    if cfg.collect_token_embeddings or cfg.collect_step_signals:
         with torch.no_grad():
             sequence = output.sequences.to(device)
             attention_mask = torch.ones_like(sequence, device=device)
@@ -110,8 +124,39 @@ def generate_reasoning_trace(prompt: str, cfg: GenerationConfig) -> dict[str, An
                 return_dict=True,
             )
         last_hidden = forward.hidden_states[-1][0]
-        prompt_token_count = int(inputs["input_ids"].shape[-1])
-        completion_hidden = last_hidden[prompt_token_count:]
-        trace["token_embeddings"] = completion_hidden.detach().cpu().to(torch.float32).tolist()
+        completion_hidden = last_hidden[prompt_token_count:].detach().cpu().to(torch.float32)
+
+    if cfg.collect_token_embeddings and completion_hidden is not None:
+        trace["token_embeddings"] = completion_hidden.tolist()
+
+    if cfg.collect_step_signals and completion_hidden is not None:
+        token_entropies = [float(entropy_from_logits(step_logits).mean().item()) for step_logits in output.scores]
+        token_spans = estimate_step_token_spans(
+            generated_text=generated_text,
+            step_boundaries=boundaries,
+            tokenizer=tokenizer,
+            n_completion_tokens=int(completion_hidden.shape[0]),
+        )
+        step_rows: list[dict[str, Any]] = []
+        for span in token_spans:
+            start = int(span["start_token"])
+            end = int(span["end_token"])
+            if end <= start:
+                continue
+            emb_chunk = completion_hidden[start:end]
+            entropy_chunk = token_entropies[start:end]
+            if emb_chunk.shape[0] == 0 or not entropy_chunk:
+                continue
+            step_rows.append(
+                {
+                    "step_index": int(span["step_index"]),
+                    "start_token": start,
+                    "end_token": end,
+                    "entropy_mean": float(sum(entropy_chunk) / len(entropy_chunk)),
+                    "embedding_mean": emb_chunk.mean(dim=0).tolist(),
+                }
+            )
+        trace["step_signal_rows"] = step_rows
+        trace["token_entropy"] = token_entropies
 
     return trace
