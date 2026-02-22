@@ -1,0 +1,23 @@
+project:
+  name: geometry-of-reasoning
+  seed: 42
+
+data:
+  dataset: openai/gsm8k
+  config: main
+  split: test
+
+models:
+  reasoning: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+  baseline: Qwen/Qwen2.5-1.5B-Instruct
+
+generation:
+  max_new_tokens: 512
+  temperature: 0.6
+  top_p: 0.95
+  do_sample: false
+  force_step_format: true
+
+metrics:
+  lid_k_values: [5, 10, 20, 40]
+  layer_indices: ["L/4", "L/2", "L"]

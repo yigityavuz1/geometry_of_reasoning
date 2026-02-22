@@ -1,0 +1,47 @@
+[tool.poetry]
+name = "geometry-of-reasoning"
+version = "0.1.0"
+description = "Training-free geometric diagnostics for reasoning trajectories in LLMs."
+authors = ["Yigit Yavuz Yildiz"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+torch = "*"
+transformers = "*"
+accelerate = "*"
+bitsandbytes = "*"
+datasets = "*"
+numpy = "*"
+scipy = "*"
+pandas = "*"
+faiss-cpu = "*"
+sympy = "*"
+scikit-learn = "*"
+statsmodels = "*"
+plotly = "*"
+gradio = "*"
+rich = "*"
+hydra-core = "*"
+pyyaml = "*"
+tqdm = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+ruff = "*"
+mypy = "*"
+jupyter = "*"
+ipykernel = "*"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[build-system]
+requires = ["poetry-core>=1.8.0"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,25 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\title{Geometry of Reasoning}
+\author{Yigit Yavuz Yildiz}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Abstract}
+This report studies training-free geometric and uncertainty signals for early detection of reasoning derailment in LLM chain-of-thought trajectories.
+
+\section{Method}
+Core signals include local intrinsic dimension (MLE, TwoNN, ABID), participation ratio, and conditional entropy, measured at step boundaries.
+
+\section{Experiments}
+We evaluate early warning, model comparison, and estimator sensitivity under a controlled protocol on GSM8K.
+
+\bibliographystyle{plain}
+\bibliography{references}
+\end{document}
