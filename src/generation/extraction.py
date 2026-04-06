@@ -6,36 +6,131 @@ from typing import Any, Iterable
 import numpy as np
 import torch
 
+_STEP_START_PATTERN = re.compile(
+    r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?(?:step\s*\d+\s*:|\(\d+\)\s+|\d+[\)\.:\-]\s+)"
+)
+_FINAL_ANSWER_PATTERN = re.compile(r"(?im)^\s*final\s+answer\s*:")
+_INLINE_MARKER_SPLIT_PATTERN = re.compile(
+    r"(?i)(?<!^)(?<!\n)\s+(?=(?:[-*]\s*)?(?:\*\*)?(?:step\s*\d+\s*:|final\s+answer\s*:))"
+)
+
+
+def _strip_step_markup(text: str) -> str:
+    cleaned = text.strip()
+    while True:
+        updated = _STEP_START_PATTERN.sub("", cleaned, count=1).strip()
+        if updated == cleaned:
+            break
+        cleaned = updated
+    cleaned = _FINAL_ANSWER_PATTERN.sub("", cleaned, count=1).strip()
+    return cleaned
+
+
+def _separate_inline_markers(text: str) -> str:
+    return _INLINE_MARKER_SPLIT_PATTERN.sub("\n", text)
+
+
+def _trim_empty_leading_headers(text: str) -> tuple[str, int]:
+    candidate = text
+    offset = 0
+    while True:
+        match = _STEP_START_PATTERN.match(candidate)
+        if match is None:
+            return candidate, offset
+        remainder = candidate[match.end() :]
+        stripped_remainder = remainder.lstrip()
+        whitespace = len(remainder) - len(stripped_remainder)
+        if not stripped_remainder:
+            return "", len(text)
+        if _STEP_START_PATTERN.match(stripped_remainder) or _FINAL_ANSWER_PATTERN.match(stripped_remainder):
+            offset += match.end() + whitespace
+            candidate = stripped_remainder
+            continue
+        return candidate, offset
+
+
+def _truncate_before_final_answer(text: str) -> tuple[str, int]:
+    matches = list(_FINAL_ANSWER_PATTERN.finditer(text))
+    if not matches:
+        return text, len(text)
+
+    for match in matches:
+        if _STEP_START_PATTERN.search(text, match.end()) is None:
+            return text[: match.start()], match.start()
+    return text, len(text)
+
+
+def _fallback_line_spans(text: str) -> list[dict[str, int]]:
+    spans: list[dict[str, int]] = []
+    cursor = 0
+    step_index = 1
+    for raw_line in text.splitlines(keepends=True):
+        line = raw_line.rstrip("\r\n")
+        start = cursor
+        end = cursor + len(line)
+        cursor += len(raw_line)
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not _strip_step_markup(stripped):
+            continue
+        if "=" not in stripped and not re.search(r"\d", stripped):
+            continue
+        left_ws = len(line) - len(line.lstrip())
+        spans.append(
+            {
+                "step_index": step_index,
+                "start_char": start + left_ws,
+                "end_char": end,
+            }
+        )
+        step_index += 1
+    return spans
+
 
 def split_steps(generated_text: str) -> list[str]:
-    step_pattern = re.compile(r"Step\s+\d+\s*:", flags=re.IGNORECASE)
-    matches = list(step_pattern.finditer(generated_text))
+    normalized_text = _separate_inline_markers(generated_text)
+    body, _ = _truncate_before_final_answer(normalized_text)
+    matches = list(_STEP_START_PATTERN.finditer(body))
     if not matches:
-        text = generated_text.strip()
+        fallback = _fallback_line_spans(body)
+        if fallback:
+            return [body[int(span["start_char"]) : int(span["end_char"])].strip() for span in fallback]
+        text = body.strip()
         return [text] if text else []
 
     steps: list[str] = []
     for idx, match in enumerate(matches):
         start = match.start()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(generated_text)
-        step_text = generated_text[start:end].strip()
-        if step_text:
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(body)
+        step_text, _ = _trim_empty_leading_headers(body[start:end].strip())
+        if step_text and _strip_step_markup(step_text):
             steps.append(step_text)
     return steps
 
 
 def find_step_boundaries(text: str) -> list[dict[str, int]]:
     """Return char ranges for `Step N:` blocks in generated text."""
-    step_pattern = re.compile(r"(Step\s+\d+\s*:)", re.IGNORECASE)
-    matches = list(step_pattern.finditer(text))
+    body, body_end = _truncate_before_final_answer(text)
+    matches = list(_STEP_START_PATTERN.finditer(body))
     if not matches:
-        return []
+        fallback = _fallback_line_spans(body)
+        if fallback:
+            return fallback
+        stripped = body.strip()
+        if not stripped:
+            return []
+        start = len(body) - len(body.lstrip())
+        return [{"step_index": 1, "start_char": start, "end_char": body_end}]
 
     spans: list[dict[str, int]] = []
     for i, match in enumerate(matches):
         start = match.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        spans.append({"step_index": i + 1, "start_char": start, "end_char": end})
+        end = matches[i + 1].start() if i + 1 < len(matches) else body_end
+        step_text, offset = _trim_empty_leading_headers(body[start:end])
+        if not _strip_step_markup(step_text):
+            continue
+        spans.append({"step_index": len(spans) + 1, "start_char": start + offset, "end_char": end})
     return spans
 
 

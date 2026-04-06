@@ -1,0 +1,18 @@
+{
+  "input_path": "results/ablation_validation_40/step_signal_table.csv",
+  "output_path": "data/debug/parser_failure_bank_validation_40.csv",
+  "rows": 108,
+  "primary_k": 20,
+  "reason_counts": {
+    "unsupported_symbolic_form": 32,
+    "no_math_signal": 24,
+    "non_equational_numeric_reasoning": 23,
+    "equation_mismatch": 22,
+    "sympy_parse_error": 7
+  },
+  "model_counts": {
+    "Qwen/Qwen2.5-1.5B-Instruct": 70,
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": 38
+  },
+  "rows_with_raw_step_text": 108
+}

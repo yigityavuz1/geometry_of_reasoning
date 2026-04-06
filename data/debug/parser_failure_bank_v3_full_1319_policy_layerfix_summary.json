@@ -1,0 +1,20 @@
+{
+  "input_path": "results/ablation_v3_full_1319_policy_layerfix/step_signal_table.parquet",
+  "output_path": "data/debug/parser_failure_bank_v3_full_1319_policy_layerfix.csv",
+  "rows": 150,
+  "primary_k": 20,
+  "reason_counts": {
+    "equation_mismatch": 36,
+    "no_math_signal": 36,
+    "non_equational_numeric_reasoning": 36,
+    "unsupported_symbolic_form": 24,
+    "trace_format_fail": 12,
+    "sympy_parse_error": 5,
+    "boundary_detected_but_empty_math": 1
+  },
+  "model_counts": {
+    "Qwen/Qwen2.5-1.5B-Instruct": 84,
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B": 66
+  },
+  "rows_with_raw_step_text": 150
+}

@@ -11,7 +11,7 @@ python = ">=3.11,<3.13"
 torch = "*"
 transformers = "*"
 accelerate = "*"
-bitsandbytes = { version = "*", markers = "platform_system == 'Linux'" }
+bitsandbytes = { version = "*", optional = true }
 datasets = "*"
 numpy = "*"
 scipy = "*"
@@ -26,6 +26,8 @@ rich = "*"
 hydra-core = "*"
 pyyaml = "*"
 tqdm = "*"
+kaleido = "^1.2.0"
+pyarrow = "^23.0.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
@@ -33,6 +35,9 @@ ruff = "*"
 mypy = "*"
 jupyter = "*"
 ipykernel = "*"
+
+[tool.poetry.extras]
+quantization = ["bitsandbytes"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

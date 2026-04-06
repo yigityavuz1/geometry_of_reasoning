@@ -2,7 +2,9 @@
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath}
 \usepackage{booktabs}
+\usepackage{float}
 \usepackage{graphicx}
+\usepackage{hyperref}
 
 \title{Geometry of Reasoning}
 \author{Yigit Yavuz Yildiz}
@@ -12,13 +14,120 @@
 \maketitle
 
 \section{Abstract}
-This report studies training-free geometric and uncertainty signals for early detection of reasoning derailment in LLM chain-of-thought trajectories.
+This report studies training-free geometric and uncertainty signals for process-level diagnosis of reasoning failure in language models. The final replay uses GSM8K test questions for two 1.5B-scale models, captures hidden states at early, middle, and late layers, and evaluates failure discrimination, model comparison, and $k$-sensitivity under a single reproducible pipeline. On the fixed late-layer headline view, the combined classifier reaches AUROC 0.816 and AUPRC 0.630 with mean lead time $+0.67$ steps before the first incorrect step. The strongest fixed-layer classifier is Qwen (AUROC 0.853), but the clearest early-warning signature appears in DeepSeek when layer selection is allowed (best early-warning layer: middle, lead time 1.236, alarm-before-error rate 0.538). The main conclusion is therefore nuanced: process-level geometry and entropy are informative, but the best readout layer is model-dependent and a single pooled alarm policy is not yet universally reliable.
 
 \section{Method}
-Core signals include local intrinsic dimension (MLE, TwoNN, ABID), participation ratio, and conditional entropy, measured at step boundaries.
+The pipeline enforces a step-formatted reasoning trace, extracts end-of-step hidden-state summaries, and judges each step with an offline symbolic checker. Each reasoning trace is reduced to step-boundary snapshots and evaluated with the same A/B/C protocol. The core signals are:
 
-\section{Experiments}
-We evaluate early warning, model comparison, and estimator sensitivity under a controlled protocol on GSM8K.
+\begin{itemize}
+    \item local intrinsic dimension estimates (MLE, TwoNN, ABID),
+    \item participation ratio as a global effective-dimension proxy,
+    \item token-level entropy aggregated at step boundaries,
+    \item parser-aware step correctness labels from a SymPy-based judge.
+\end{itemize}
+
+For Experiment A, step-level geometric and uncertainty features are aggregated into a lightweight logistic classifier that predicts final failure under cross-validation. Alarm policies are evaluated separately from the classifier, so the warning score and the alarm decision can be tuned independently. Experiment B compares models on exactly the same dataset indices. Experiment C measures sensitivity to the neighborhood parameter $k \in \{5, 10, 20, 40\}$.
+
+\section{Experimental Setup}
+Primary experiments use GSM8K (\texttt{openai/gsm8k}, \texttt{main}, \texttt{test}) and two 1.5B-scale models:
+
+\begin{itemize}
+    \item \texttt{deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B}
+    \item \texttt{Qwen/Qwen2.5-1.5B-Instruct}
+\end{itemize}
+
+The final artifact used in this report is \texttt{results/ablation\_v3\_full\_1319\_policy\_layerfix/}. This run contains 155{,}268 raw step rows across layers and $k$ values, covering all 1{,}319 GSM8K test questions for both models. Headline reporting fixes primary $k=20$ and keeps the late layer as the primary Experiment A/B view, while per-model layer recommendations are exported as a secondary sensitivity analysis. Confidence intervals are estimated with 400 bootstrap resamples at $\alpha=0.05$. The run also stores config hash, model revision, and parquet copies of the main tables for exact reanalysis.
+
+\section{Main Results}
+The strongest claim supported by the final replay is that process-level geometry and entropy remain meaningfully predictive of final failure. The more precise interpretation is that this predictiveness separates into two regimes: fixed-layer discrimination is strongest for Qwen, while early-warning timing improves most clearly for DeepSeek when layer selection is allowed.
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Experiment A View & Layer & AUROC & AUPRC & Lead Time \\
+\midrule
+Headline fixed view & Late & 0.816 & 0.630 & 0.670 \\
+Best classification layer & Early & 0.820 & 0.635 & 0.559 \\
+Best early-warning layer & Middle & 0.817 & 0.629 & 0.735 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The fixed late-layer headline already improves strongly over the older full run: AUROC rises from 0.761 to 0.816, AUPRC from 0.539 to 0.630, and mean lead time from $-1.11$ to $+0.67$ steps. The selected pooled alarm policy is now \texttt{trajectory\_q68}, but pooled timing still remains imperfect, with false-alarm-before-any-error rate 0.470 and early-warning objective $-0.151$.
+
+At the model level, fixed-layer classification and layer-aware early warning tell different stories:
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Model (fixed late) & AUROC & AUPRC & Brier & Lead Time \\
+\midrule
+Qwen2.5-1.5B-Instruct & 0.853 & 0.694 & 0.154 & -0.902 \\
+DeepSeek-R1-Distill-Qwen-1.5B & 0.785 & 0.552 & 0.192 & 1.128 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Qwen is the strongest fixed-layer failure classifier: on the common-index view it reaches AUROC 0.853, AUPRC 0.694, and signal-gap mean 1.870. However, its early-warning behavior remains weak: the fixed late-layer mean lead time is negative, and even its early-warning-best layer only reaches lead time 0.362 with a still-negative early objective. DeepSeek is the opposite profile. Its fixed late-layer classifier is weaker, but it exhibits the clearest pre-error signal: fixed late lead time is 1.128, its best classification layer is early (AUROC 0.787), and its best early-warning layer is middle (lead time 1.236, alarm-before-error rate 0.538, early objective 0.324). This is the strongest evidence for the project thesis: process-level geometry is not merely predictive of final failure, but can produce actionable timing advantages in the reasoning-style model when the layer choice matches the architecture.
+
+Experiment C is now stable enough to freeze the default $k$ policy. For Qwen, AUROC CV over $k$ is 0.0031 with mean Kendall $\tau$ 0.827. For DeepSeek, AUROC CV over $k$ is 0.0021 with mean Kendall $\tau$ 0.888. In practice, $k=20$ remains a strong default because it sits near the quality/stability trade-off point without the extra smoothing cost of $k=40$.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.82\linewidth]{figures/model_comparison_common_index.png}
+    \caption{Experiment B fixed-layer common-index comparison. This is the fair headline view because both models are scored on the same GSM8K indices and the same fixed late layer.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.82\linewidth]{figures/model_comparison_best_layer.png}
+    \caption{Per-model best-layer sensitivity view. This does not replace the fixed-layer comparison, but it reveals that DeepSeek benefits from an earlier layer while Qwen remains strongest at late.}
+\end{figure}
+
+\section{Failure Analysis}
+Parser/judge noise is no longer a blocking issue, but it still shapes the remaining performance gap. On the fixed late-layer $k=20$ slice used for headline reading, the overall parse-fail rate is 5.4\%. This breaks down to 8.1\% for Qwen and 3.4\% for DeepSeek. The sampled failure bank (\texttt{data/debug/parser\_failure\_bank\_v3\_full\_1319\_policy\_layerfix\_summary.json}) no longer shows broad parser collapse. Instead, it is concentrated in a smaller family of hard cases: \texttt{equation\_mismatch} (36 rows), \texttt{no\_math\_signal} (36), \texttt{non\_equational\_numeric\_reasoning} (36), and \texttt{unsupported\_symbolic\_form} (24), with only 5 sampled \texttt{sympy\_parse\_error} rows. This is an important milestone: the dominant residual errors are now mostly difficult reasoning or narrative steps, not generic formatting failures.
+
+The main unresolved gap is pooled alarm quality. The system is already a credible final-failure discriminator, but a single global alarm policy still produces too many early false alarms on successful traces. This is why the repository now treats fixed-layer pooled metrics as the headline and model-specific best-layer views as sensitivity analyses rather than replacing the fair comparison outright.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\linewidth]{figures/early_warning_threshold_sweep.png}
+    \caption{Alarm policy trade-off curve for the pooled Experiment A view. Higher alarm-before-error rates still come with substantial false-alarm pressure, which is why the pooled early-warning objective remains conservative.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.78\linewidth]{figures/k_sensitivity.png}
+    \caption{Experiment C $k$ sensitivity. The final replay confirms that $k=20$ is a stable project standard rather than a brittle hyperparameter choice.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\linewidth]{figures/case_seismograph.png}
+    \caption{Case-study seismograph exported directly from the full replay results. The demo layer can now be selected explicitly or chosen from fixed, classification-best, or early-warning-best modes.}
+\end{figure}
+
+\section{Limitations}
+This work currently has four main limitations:
+
+\begin{itemize}
+    \item pooled early-warning is still weaker than final-failure discrimination because false alarms remain high on successful traces,
+    \item the best analysis layer differs by model, so any single fixed-layer headline inevitably hides part of the structure,
+    \item Qwen still has a meaningful residual \texttt{no\_math\_signal} / parser tail that can distort timing-oriented metrics,
+    \item the current demo and report are generated from static replay artifacts rather than a live model-forward interface.
+\end{itemize}
+
+\section{Next Steps}
+The repository is now ready to shift from Phase 4 iteration to Phase 5 packaging. The highest-value next steps are:
+
+\begin{itemize}
+    \item export the final report figures and compile the PDF around the full replay artifact,
+    \item package the seismograph demo as a short GIF/video for README and application material,
+    \item keep the fair fixed-layer comparison as the headline but show per-model best-layer results as sensitivity analysis,
+    \item optionally run one small Qwen-focused parser polish pass if a cleaner demo case is needed.
+\end{itemize}
+
+Taken together, the final replay supports a credible research narrative. Training-free geometric and uncertainty signals carry real process-level information, the layer dependence is measurable rather than anecdotal, parser/judge robustness has improved enough for full-scale reporting, and the remaining work is mostly packaging rather than foundational pipeline repair.
 
 \bibliographystyle{plain}
 \bibliography{references}

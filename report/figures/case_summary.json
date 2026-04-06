@@ -1,0 +1,26 @@
+{
+  "results_dir": "results/ablation_v3_full_1319_policy_layerfix",
+  "model_name": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+  "primary_k": 20,
+  "analysis_layer": "middle",
+  "analysis_layer_index": 14,
+  "layer_selection": "early_warning_best",
+  "selected_policy": {
+    "policy_name": "trajectory_q68",
+    "score_col": "trajectory_warning_score",
+    "threshold_kind": "quantile",
+    "threshold_value": 0.68,
+    "consecutive_n": 1,
+    "rolling_k": 0,
+    "rolling_m": 0,
+    "base_floor_quantile": null,
+    "threshold": 0.3668398126276596
+  },
+  "dataset_index": 725,
+  "n_steps": 13,
+  "final_correct": false,
+  "first_alarm_step": 1,
+  "first_error_step": 13,
+  "lead_time": 12.0,
+  "step_text_available": true
+}

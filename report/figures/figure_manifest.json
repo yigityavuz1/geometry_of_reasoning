@@ -1,0 +1,42 @@
+{
+  "results_dir": "results/ablation_v3_full_1319_policy_layerfix",
+  "out_dir": "report/figures",
+  "html_only": false,
+  "case_model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+  "case_index": 725,
+  "case_layer_selection": "early_warning_best",
+  "case_analysis_layer": "middle",
+  "case_primary_k": 20,
+  "report_summary": {
+    "json": "report/figures/report_summary.json",
+    "md": "report/figures/report_summary.md"
+  },
+  "case_summary_path": "report/figures/case_summary.json",
+  "case_steps_path": "report/figures/case_steps.csv",
+  "figures": {
+    "model_comparison_common_index": {
+      "html": "report/figures/model_comparison_common_index.html",
+      "png": "report/figures/model_comparison_common_index.png"
+    },
+    "model_comparison_best_layer": {
+      "html": "report/figures/model_comparison_best_layer.html",
+      "png": "report/figures/model_comparison_best_layer.png"
+    },
+    "k_sensitivity": {
+      "html": "report/figures/k_sensitivity.html",
+      "png": "report/figures/k_sensitivity.png"
+    },
+    "early_warning_threshold_sweep": {
+      "html": "report/figures/early_warning_threshold_sweep.html",
+      "png": "report/figures/early_warning_threshold_sweep.png"
+    },
+    "warning_trajectory": {
+      "html": "report/figures/warning_trajectory.html",
+      "png": "report/figures/warning_trajectory.png"
+    },
+    "case_seismograph": {
+      "html": "report/figures/case_seismograph.html",
+      "png": "report/figures/case_seismograph.png"
+    }
+  }
+}

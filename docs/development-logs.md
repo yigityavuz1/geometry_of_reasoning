@@ -435,3 +435,456 @@ Her kayit asagidaki sirayi takip eder:
 - Benchmark: Faz 4'u daha buyuk subsette (`num_samples >= 50`) ve iki modelle (`DeepSeek-R1-Distill`, `Qwen-Instruct`) kos.
 - Add: Experiment A/B/C icin confidence interval (bootstrap) katmani.
 - Refactor: step-boundary token-span hizalamasini daha dogrudan char-token alignment ile guclendir.
+
+### LOG-20260222-06
+
+**Context**
+- `results/ablation_v2_full_1319_fewshot/` sonrasi TODO iterasyonunu gercek repo durumuna tasimak: Faz 4'u savunulabilir hale getirmek ve Faz 5 icin demo/rapor/reproduksiyon paketini somutlastirmak.
+
+**Scope**
+- Parser/judge failure-bank altyapisi
+- Early-warning policy refactor + timing odakli raporlama
+- Calibration katmani
+- Demo/report/stability tooling
+- Dokumantasyon ve run-guide genisletme
+
+**Files Touched**
+- `scripts/run_ablation.py`
+- `scripts/build_parser_failure_bank.py`
+- `scripts/run_demo_case.py`
+- `scripts/run_stability_suite.py`
+- `scripts/export_report_figures.py`
+- `src/experiments/early_warning.py`
+- `src/evaluation/calibration.py`
+- `src/visualization/seismograph.py`
+- `README.md`
+- `docs/experiment_run_guide.md`
+- `report/main.tex`
+- `tests/test_ablation_reporting.py`
+- `tests/test_calibration.py`
+- `tests/test_early_warning.py`
+- `docs/TODO.md`
+- `docs/development-logs.md`
+
+**Implementation Details**
+- `run_ablation.py` guclendirildi:
+  - bootstrap CI (`AUROC`, `AUPRC`, `Brier`, `ECE`)
+  - Experiment B icin `all_samples` + `common_index` ayri raporlama
+  - `primary_k=20` metadata/rationale
+  - per-model checkpoint/resume ve zengin step-table schema (`step_text`, `normalized_step_text`, `matched_values`)
+- `src/experiments/early_warning.py` eklendi:
+  - warning score ile alarm policy birbirinden ayrildi
+  - static / quantile / z-score / persistence / hybrid policy ailesi eklendi
+  - `alarm_before_error_rate`, `false_alarm_before_any_error_rate`, `late_alarm_rate`, `missed_alarm_rate`, `first_alarm_step_mean`, `first_error_step_mean` gibi timing odakli metrikler eklendi
+- `src/evaluation/calibration.py` eklendi:
+  - raw / Platt / Isotonic calibrator karsilastirmasi
+  - reliability curve tablosu
+  - model-bazli calibration artifact export
+- Parser/judge failure-bank akisi eklendi:
+  - `scripts/build_parser_failure_bank.py`
+  - `data/debug/parser_failure_bank*_summary.json`
+- Faz 5 tooling eklendi:
+  - `scripts/run_demo_case.py` ile tek-vaka seismograph render
+  - `scripts/export_report_figures.py` ile PNG + HTML figure export
+  - `scripts/run_stability_suite.py` ile seed/slice stabilite ozeti
+  - `src/visualization/seismograph.py` warning threshold, alarm marker, incorrect/parse-fail overlay ve final verdict desteğiyle genisletildi
+- README, run-guide ve `report/main.tex` yeni arastirma hikayesine gore guncellendi.
+
+**Decisions**
+- Multi-model headline reporting icin primary scope = `common_index`.
+- Headline `k` sabiti = `20`.
+- Calibration pipeline model-agnostic tasarlandi; headline ihtiyac DeepSeek olsa da her model icin artifact uretilebiliyor.
+- Demo, modeli yeniden kosturmak yerine mevcut results klasorunden vaka secerek render edecek sekilde tasarlandi; Faz 5 tekrar uretilebilirligi icin daha pratik.
+
+**Validation**
+- README ve `docs/experiment_run_guide.md` uzerinden tum yeni CLI'ler dokumante edildi.
+- Yeni moduller icin test kapsami eklendi:
+  - `tests/test_ablation_reporting.py`
+  - `tests/test_calibration.py`
+  - `tests/test_early_warning.py`
+- 40-sample validation ve parser-failure-bank akisi calistirilip artefaktlar uretildi:
+  - `results/ablation_validation_40_judgefix/`
+  - `data/debug/parser_failure_bank_validation_40_judgefix.csv`
+  - `data/debug/parser_failure_bank_validation_40_judgefix_summary.json`
+
+**Known Gaps / Risks**
+- `judgefix` semantik etiketi iyilestirse de warning score halen `parse_fail` sinyaline asiri duyarliydi; bu da discrimination metriklerinde gerileme yaratti.
+- Parser hala belirli symbolic/algebraic phrasing pattern'lerinde kirli lhs uretebiliyordu (`x x`, `G: G`, `from Step 4 into Step 5`, vb.).
+- Faz 5 paketi artik repo'da mevcut, ancak rapor metrikleri yeni parser/judge davranisiyla yeniden kosulmadan finalize edilmemeli.
+
+**Next Actions**
+- Fix: parser cleanup + symbolic-equation judging regresyonlari.
+- Re-tune: warning score'unu `reason`-aware hale getir.
+- Validate: 40-sample validation rerun ile `old good -> new bad` regresyonlarini sifirla.
+
+### LOG-20260222-07
+
+**Context**
+- Kullanici istegiyle proje onerisi / plan / repo durumu yeniden karsilastirildi; judgefix sonrasi belirlenen parser regresyonlari ve daha buyuk mantik hatasi (symbolic equations'in `equation_mismatch` sayilmasi) duzeltildi.
+
+**Scope**
+- Parser cleanup for chained symbolic equations
+- Judge logic fix for symbolic relations
+- Reason-aware early warning score
+- Development log realignment
+
+**Files Touched**
+- `src/evaluation/step_parser.py`
+- `src/evaluation/sympy_judge.py`
+- `src/experiments/early_warning.py`
+- `scripts/run_ablation.py`
+- `tests/test_step_parser.py`
+- `tests/test_sympy_judge.py`
+- `tests/test_early_warning.py`
+- `docs/development-logs.md`
+
+**Implementation Details**
+- `src/evaluation/step_parser.py` guclendirildi:
+  - `strip_step_header(...)` artik tekrarlanan `Step N:` basliklarini art arda siliyor
+  - basit LaTeX normalize eklendi (`\frac`, `\times`, `\(`, `\)`, vb.)
+  - inline `Step N` referanslari equation-side temizliginden once temizleniyor
+  - colon-label / duplicate-symbol / descriptive-label cleanup eklendi:
+    - `x x -> x`
+    - `G: G -> G`
+    - `Subtract 30 from both sides: 2S = 80` icin lhs `2S`
+    - `Substituting ... from Step 4 into Step 5, we get A = ...` icin lhs `A`
+- `src/evaluation/sympy_judge.py` mantik duzeltmesi:
+  - parse edilebilir symbolic equations artik otomatik `equation_mismatch` olmuyor
+  - `equation_mismatch` yalnizca gercek numeric contradiction durumlarina indirildi
+  - boylece `0.75x = 19.50`, `G + S = 110`, `2S = 80`, `S + C + T = 20 + 80 + 160 = 260` gibi relation'lar desteklenebiliyor
+- `src/experiments/early_warning.py` warning score refactor:
+  - eski `+0.75 * parse_fail` agirligi yerine `reason`-aware weight table + daha kucuk `parse_fail` katkisi kullanildi
+  - `equation_mismatch`, `sympy_parse_error`, `unsupported_symbolic_form` gibi reason'lar farkli siddette agirlik aliyor
+  - `equation_matches_reference`, `equation_consistent_supported` gibi acik destek sinyalleri warning score'u asagi cekebiliyor
+- `scripts/run_ablation.py` summary metadata yeni warning-score spesifikasyonuyla hizalandi.
+
+**Decisions**
+- Bu iterasyonda en buyuk mantik hatasi olarak "symbolic equation != solved equality" yanilgisi kabul edildi ve judge mantigi buna gore yeniden sinirladi.
+- `no_math_signal` artik tek basina agresif warning artisi yaratmiyor; daha belirleyici `reason` kodlari one alindi.
+- Faz 4/Faz 5 hikayesini bozmayacak minimum ama etkili fix secildi; multi-layer hidden-state redesign bu turda kapsama alinmadi.
+
+**Validation**
+- Hedefli test kosusu:
+  - `poetry run pytest tests/test_step_parser.py tests/test_sympy_judge.py tests/test_early_warning.py tests/test_ablation_reporting.py tests/test_calibration.py`
+  - Sonuc: `34 passed`
+- Manuel spot-check:
+  - `0.75x = 19.50` -> `equation_matches_reference`
+  - `S + C + T = 20 + 80 + 160 = 260` -> `equation_matches_reference`
+  - `Subtract 30 from both sides: 2S = 80` -> `equation_consistent_supported`
+- Offline reason-aware reanalysis (`results/ablation_validation_40_judgefix/step_signal_table.csv`) sonucu:
+  - `AUROC = 0.7624`
+  - `AUPRC = 0.6429`
+  - `Brier = 0.1891`
+  - `ECE = 0.1321`
+  - `lead_time_mean = -0.0667`
+  - `selected_alarm_policy = static_q75`
+  - Bu, judgefix sonrasi dusen discrimination metriklerinin warning-score refactor ile buyuk olcude toparlanabildigini gosteriyor.
+
+**Known Gaps / Risks**
+- Parser/judge fix'lerinin tam etkisini gormek icin yeni 40-sample rerun hala gerekli; mevcut offline reanalysis eski step-table etiketlerini kullanir.
+- Lead-time hala arastirma hedefinin gerisinde; discrimination toparlansa da erkenlik problemi tam kapanmis degil.
+- Proje onerisi/Faz 3 hedefine kiyasla hidden-state tarafi halen esasen final-layer + approx step-token span uzerinden gidiyor; erken/orta/gec layer snapshot hedefi ileriki turda acilabilir.
+
+**Next Actions**
+- Run: yeni parser/judge/warning-score ile 40-sample validation rerun.
+- Build: ayni run icin yeni parser failure bank.
+- Decide: regresyonlar sifirlanir ve metric toparlanmasi korunursa 200/400/full replay'e cik.
+
+### LOG-20260222-08
+
+**Context**
+- `ablation_validation_200_residualfix/` analizi sonrasinda kritik blokaj olarak sample coverage/accounting kaybi tespit edildi: bazi trace'ler step tablosundan tamamen dusuyor, dolayisiyla Experiment A/B ornek sayilari yapay olarak azaliyordu. Ayni anda parser failure bank'te kalan yuzde-gosterimi, birim donusumu ve self-correction karisikligi gibi residual issue'lar da temizlenmeliydi.
+
+**Scope**
+- Faz 4 validasyon muhasebesi / coverage fix
+- Sample-level scoring aggregator guclendirme
+- Residual parser/judge edge-case temizligi
+- Validation ve log hizalama
+
+**Files Touched**
+- `scripts/run_ablation.py`
+- `scripts/build_parser_failure_bank.py`
+- `src/experiments/early_warning.py`
+- `src/evaluation/step_parser.py`
+- `src/evaluation/sympy_judge.py`
+- `tests/test_ablation_reporting.py`
+- `tests/test_early_warning.py`
+- `tests/test_sympy_judge.py`
+- `docs/development-logs.md`
+
+**Implementation Details**
+- `scripts/run_ablation.py` coverage/accounting tarafi guclendirildi:
+  - `step_tokens.shape[0] < 3` olan step'ler artik tamamen drop edilmiyor; kisa step'ler entropy/judge bilgisiyle tabloya yaziliyor, geometri alanlari gerektiğinde `NaN` kalabiliyor.
+  - Hic usable step-row uretilemeyen sample'lar icin fallback satirlari eklendi:
+    - `trace_format_fail`
+    - `trace_signal_fail`
+    - `empty_completion`
+  - Bu fallback satirlari `step_index=0` ile sample'in evaluation coverage'ini koruyor; sample artik progress'te "tamamlandi" olup tabloda gorunmez olmuyor.
+  - Geometri ozetleri icin `_metric_summary_for_tokens(...)` yardimcisi eklendi; `PR` icin `n>=2`, LID/ABID/TwoNN icin `n>=3` sartlari ayrik ele alindi.
+- Sample-level feature builder (`_build_sample_features`) zenginlestirildi:
+  - Eski `prefix_mean` odakli feature seti genisletildi.
+  - Yeni feature'lar:
+    - `warning_prefix_max`
+    - `warning_prefix_last`
+    - `warning_prefix_top2_mean`
+    - `warning_delta_prefix_max`
+    - `hybrid_warning_prefix_max`
+    - `reason_weight_prefix_mean/max`
+    - `parse_fail_prefix_any`
+    - `trace_failure_prefix_any`
+    - `observed_prefix_steps`, `observed_step_rows`
+  - Boylesiyle step-level guclu ama sample-levelde zayif kalan DeepSeek benzeri davranislar icin "erken pik / sert sicrama / fallback trace" sinyalleri kaybolmuyor.
+  - Model girisine gitmeden once `_prepare_feature_matrix(...)` ile `NaN/inf` feature'lar median-fill + zero-fill stratejisiyle stabil hale getirildi.
+- `src/experiments/early_warning.py`:
+  - Yeni reason weight'ler eklendi: `trace_format_fail`, `trace_signal_fail`, `empty_completion`, `missing_step_judgement`.
+  - `prepare_warning_features(...)` artik eksik `lid/entropy` alanlarini imputasyonla ele aliyor; warning score `NaN` uretmiyor.
+- `src/evaluation/step_parser.py` residual edge-case cleanup:
+  - Basit imperial unit normalization eklendi:
+    - `miles -> feet`
+    - `feet + inches -> feet`
+    - `inches -> feet`
+  - Boylece `4 feet - 6 inches = 3 feet 6 inches = 42 inches` ve `3 miles = 3 * 5280 = 15840 feet` tarzi step'ler parser tarafinda daha temiz temsil edilebiliyor.
+  - Self-correction prose icin ek split kuralı eklendi:
+    - `Wait ...`
+    - `But wait ...`
+    - `Hold on ...`
+    - `Oops ...`
+  - `_finalize_cleaned_side(...)` icindeki "rightmost operator fragment" heuristic'i yalnizca gercek descriptive-text iceren LHS'lerde uygulanacak sekilde daraltildi; saf aritmetik ifadelerin basi artik yanlislikla kirpilmiyor.
+- `src/evaluation/sympy_judge.py`:
+  - Yuzde-gosterimi ile decimal-oran arasindaki residual mismatch'ler icin `_expr_percent_display_match(...)` eklendi.
+  - Boylece `0.3333 * 100 = 33.33%` gibi display-format esitlikleri dogru kabul edilebiliyor.
+- `scripts/build_parser_failure_bank.py`:
+  - Varsayilan reason bucket listesi yeni accounting reason'lariyla genisletildi:
+    - `trace_signal_fail`
+    - `trace_format_fail`
+    - `empty_completion`
+  - Boylece validation rerun sonrasi olusan fallback trace'ler debug bank'te manuel review icin gorunur kalacak.
+
+**Decisions**
+- Coverage problemi "step yoksa sample yok" seklinde cozulmek yerine, trace-level failure durumlarini explicit reason kodlariyla tabloda temsil eden bir muhasebe tasarimina cekildi.
+- Sample-level scorer icin model sinifi degistirilmedi; proje planindaki "hafif logistic / threshold-based" yaklasim korunarak feature seti zenginlestirildi.
+- Fake geometry uretmek yerine eksik geometri alanlari kontrollu imputasyonla downstream score hesabina tasindi; bu sayede parser/accounting fail'leri saklanmadi.
+
+**Validation**
+- Hedefli regresyon paketi:
+  - `poetry run pytest tests/test_step_parser.py tests/test_sympy_judge.py tests/test_early_warning.py tests/test_ablation_reporting.py`
+  - Sonuc: `46 passed`
+- Tam test paketi:
+  - `poetry run pytest`
+  - Sonuc: `57 passed`
+- CLI smoke:
+  - `poetry run python scripts/run_ablation.py --experiment A --models sshleifer/tiny-gpt2 --split test --start-index 0 --num-samples 1 --max-new-tokens 48 --k-values 5 --primary-k 5 --early-n 2 --bootstrap-iters 10 --out results/ablation_smoke_accountingfix_tiny`
+  - Sonuc: basarili; `ablation_summary.json` ve per-model `step_signal_table.csv` yazildi.
+- In-memory sentinel smoke:
+  - `_run_experiment_a_core(...)` uzerinde `trace_format_fail` satiri iceren minimal tablo kosuldu.
+  - Sonuc: `coverage.trace_failure_samples = 1`, `coverage.zero_step_samples = 1`, pipeline hata vermeden sample-level output uretti.
+- IDE linter:
+  - Editlenen dosyalarda hata yok.
+
+**Known Gaps / Risks**
+- Bu iterasyon coverage ve residual parsing blokajlarini temizliyor; fakat gercek metrik etkisini gormek icin yeni 200-sample rerun hala zorunlu.
+- Multi-layer hidden-state capture (`L/4`, `L/2`, `L`) hala planin gerisinde; Faz 3/Faz 4 hizalamasinin bir sonraki buyuk yapisal isi olarak duruyor.
+- Sample-level scorer daha guclu olsa da halen hand-crafted feature + logistic yapisinda; tam replay sonrasinda per-model calibration/feature importance incelemesi gerekebilir.
+
+**Next Actions**
+- Run: yeni accounting + scoring + parser/judge fix'leriyle 200-sample validation rerun.
+- Build: ayni kosu icin parser failure bank'i yeni reason kodlari (`trace_*`) dahil edilerek yeniden uret.
+- Compare: yeni kosuyu `ablation_validation_200_residualfix/` ile coverage, AUROC/AUPRC, lead-time ve common-index bazinda karsilastir.
+- Decide: metrikler stabilse full replay'e gec; degilse siradaki yapisal adim olarak multi-layer hidden-state capture'i ac.
+
+### LOG-20260222-09
+
+**Context**
+- `docs/development_plan.md` ile repo arasindaki en buyuk yapisal acik kapanmamis durumda duruyordu: hidden-state toplama hala fiilen tek katman (`late`) uzerinden gidiyordu. Ayni anda prompt protokolunde literal placeholder kalintisi oldugu icin model bazen template'i kopyaliyor, unit normalization ise tum normalize hattina global uygulandigi icin gereksiz yan etkilere acik hale geliyordu.
+
+**Scope**
+- Prompt placeholder contradiction temizligi + retry mekanizmasi
+- Unit normalization'i denklem-odakli parse hattina tasima
+- Multi-layer hidden-state capture (`early/middle/late`) ve downstream Experiment A/B/C uyarlamasi
+- Validation ve smoke hizalama
+
+**Files Touched**
+- `src/generation/runner.py`
+- `src/evaluation/step_parser.py`
+- `src/evaluation/sympy_judge.py`
+- `scripts/run_ablation.py`
+- `scripts/run_generation.py`
+- `scripts/run_smoke_gsm8k_pipeline.py`
+- `tests/test_generation_runner.py`
+- `tests/test_step_parser.py`
+- `tests/test_ablation_reporting.py`
+- `docs/development-logs.md`
+
+**Implementation Details**
+- `src/generation/runner.py`
+  - Prompt protokolunden literal placeholder satiri cikarildi; `Final Answer: <single number>` yerine gercek sayili format ornegi kullanildi.
+  - Model ciktisinda acik template-kopyasi gorulurse (`<single number>`, `<equation>`, `Step N: <...>`, `Final Answer: <...>`) bir adet strict retry yapilacak sekilde generation akisi guncellendi.
+  - `GenerationConfig` genisletildi:
+    - `capture_layer_names`
+    - `retry_on_placeholder_output`
+    - `max_format_retries`
+  - Hidden states artik tek final layer yerine secili snapshot seti icin toplanıyor:
+    - `early`
+    - `middle`
+    - `late`
+  - Geriye uyumluluk korundu:
+    - `token_embeddings` halen `late` layer alias'i olarak yaziliyor.
+    - `step_signal_rows` halen `late` layer alias'i olarak yaziliyor.
+  - Yeni trace alanlari:
+    - `captured_layers`
+    - `token_embeddings_by_layer`
+    - `step_signal_rows_by_layer`
+    - `format_retry_count`
+    - `format_retry_issue`
+- `src/evaluation/step_parser.py`
+  - `normalize_math_text(...)` icin `convert_units` bayragi eklendi.
+  - Boylece miles/feet/inches donusumu artik tum normalize hattina global uygulanmiyor.
+  - Imperial-unit donusumu yalnizca denklem-side temizleme asamasinda aktif.
+- `src/evaluation/sympy_judge.py`
+  - `_safe_sympify(...)` unit-aware parse yolunu kullanacak sekilde guncellendi; judge tarafinda equation-specific unit chain destegi korundu.
+- `scripts/run_ablation.py`
+  - Step tablo semasi multi-layer olacak sekilde genisletildi:
+    - `layer_name`
+    - `layer_index`
+  - Generation sonrasi her step/k cifti icin artik her capture layer adina ayri satir uretiliyor.
+  - Fallback/sentinel satirlari (`trace_*`, `empty_completion`) katman bazinda da yaziliyor; coverage mantigi bozulmadi.
+  - Yeni `--analysis-layer` argumani eklendi; Experiment A/B/C secilen layer uzerinden kosuyor.
+  - Root summary'ye `available_layers` ve `analysis_layer` yaziliyor.
+  - Experiment A icin yeni katman karsilastirma artefakti eklendi:
+    - `experiment_a_layer_comparison.csv`
+    - `experiment_a_layer_comparison.json`
+  - `Experiment B` ve `Experiment C` satirlari secili `analysis_layer` bilgisini tasiyor.
+- `scripts/run_generation.py` ve `scripts/run_smoke_gsm8k_pipeline.py`
+  - Buyuk JSON izlerini sistirmemek icin raw multi-layer embedding payload'i trace JSON'dan ayri dosyalara yaziliyor.
+  - Smoke script artik katman-bazli embedding dosyalari ve `metrics_by_layer` ozeti de uretiyor.
+
+**Decisions**
+- Multi-layer geciste eski kodu bozmamak icin `late` layer alanlari backward-compatible alias olarak korundu; boylece mevcut analiz ve yardimci script'ler aniden kirilmadi.
+- Unit normalization tamamen silinmedi; ama global text normalization yerine yalnizca equation parse yoluna daraltildi. Bu, hem `imperial conversion` edge-case'ini koruyor hem de soru/metin parse yan etkilerini azaltiyor.
+- Placeholder retry mantigi yalnizca acik template-copy pattern'leri icin tetikleniyor; boylece normal matematiksel `<` / `>` kullanimlari gereksiz retry'a sebep olmuyor.
+
+**Validation**
+- Hedefli regresyon paketi:
+  - `poetry run pytest tests/test_generation_runner.py tests/test_step_parser.py tests/test_sympy_judge.py tests/test_ablation_reporting.py tests/test_early_warning.py tests/test_calibration.py`
+  - Sonuc: `55 passed`
+- Tam test paketi:
+  - `poetry run pytest`
+  - Sonuc: `64 passed`
+- Multi-layer smoke:
+  - `poetry run python scripts/run_ablation.py --experiment A --models sshleifer/tiny-gpt2 --split test --start-index 0 --num-samples 1 --max-new-tokens 48 --k-values 5 --primary-k 5 --early-n 2 --bootstrap-iters 10 --analysis-layer early --out results/ablation_smoke_multilayer_early`
+  - Sonuc:
+    - basarili
+    - `available_layers = ["early", "late", "middle"]`
+    - `rows = 3` (1 sample x 1 step x 3 layer)
+    - `analysis_layer = "early"`
+- IDE linter:
+  - Editlenen dosyalarda hata yok.
+
+**Known Gaps / Risks**
+- Yeni multi-layer schema ile en temiz kosu davranisi icin yeni bir `--out` dizini kullanmak daha guvenli; eski late-only checkpoint'lerle ayni output path uzerinde resume yapmak tavsiye edilmiyor.
+- Multi-layer capture halen tam hook-temelli hafif bir extraction degil; mevcut implementasyon secili snapshot'lari cikarmak icin `output_hidden_states=True` forward pass'i kullaniyor.
+- Experiment A layer-comparison artefakti eklendi; ancak daha genis "layer x model" anlatisi icin 200-sample validation sonrasinda rapor/sunum katmaninda ikinci bir toplu ozet daha gerekebilir.
+
+**Next Actions**
+- Run: yeni output klasorunde 200-sample validation'i multi-layer capture ile tekrar kostur.
+- Build: ayni kosu icin parser failure bank'i yeniden uret.
+- Compare:
+  - `late` layer'i onceki accounting-fix kosusuyla karsilastir
+  - `early/middle/late` layer comparison artefaktini incele
+- Decide: en iyi erkenlik/dogruluk trade-off'unu veren layer'i full replay default'u olarak sabitle.
+
+### LOG-20260222-10
+
+**Context**
+- Multi-layer validation sonrasi kalan 4 blokaji kapatmak:
+  - residual parser/judge false-positive aileleri
+  - layer-aware raporlama
+  - reproducibility metadata/parquet eksigi
+  - stale repo dokumani/rapor anlatimi
+
+**Scope**
+- Parser/extraction cleanup
+- Reproducibility ve output schema
+- Experiment A/B layer-aware reporting
+- README / run guide / report hizalama
+
+**Files Touched**
+- `pyproject.toml`
+- `poetry.lock`
+- `src/generation/extraction.py`
+- `src/evaluation/step_parser.py`
+- `src/generation/runner.py`
+- `scripts/run_ablation.py`
+- `scripts/run_generation.py`
+- `scripts/run_smoke_gsm8k_pipeline.py`
+- `tests/test_step_parser.py`
+- `tests/test_sympy_judge.py`
+- `tests/test_ablation_reporting.py`
+- `README.md`
+- `docs/experiment_run_guide.md`
+- `report/main.tex`
+- `docs/development-logs.md`
+
+**Implementation Details**
+- `src/generation/extraction.py`
+  - `Final Answer:` ve `Step N:` marker'lari ayni satira yapistiginda split edilebilsin diye inline-marker ayirma eklendi.
+  - `Final Answer:` sadece gercekten sonrasinda yeni step header yoksa truncate edilecek sekilde daraltildi; boylece `Final Answer: ... Step 1: ...` turu bozuk ama kurtarilabilir trace'ler tamamen kaybolmuyor.
+- `src/evaluation/step_parser.py`
+  - LHS tarafinda saf anlatim etiketi olan cok-kelimeli phrase'leri (`Total cost of lemons` gibi) equation zincirinin parcası sanmayan yeni heuristik eklendi.
+  - Tek harfli sembol assignment'lari (`S = 20`, `x = ...`) korunacak sekilde heuristik dar tutuldu; mevcut correct symbolic flows bozulmadi.
+- `src/generation/runner.py`
+  - `collect_model_metadata(...)` eklendi.
+  - Generation trace artik `model_metadata` tasiyor:
+    - resolved model name
+    - model/tokenizer revision
+    - device
+    - dtype
+    - quantization/compile flags
+- `scripts/run_ablation.py`
+  - Ana tablolar icin ortak `csv + parquet` yazma yardimcisi eklendi.
+  - `--input` artik `.parquet` da kabul ediyor.
+  - Root outputlara `run_metadata.json` eklendi; `ablation_summary.json` icine `reproducibility` blogu ve `config_hash` yaziliyor.
+  - Step table output layout'i artik root/combined/model seviyesinde parquet yollarini da iceriyor.
+  - Experiment A layer comparison'dan otomatik `layer_recommendation` uretiliyor (AUROC birincil, timing tie-break).
+  - Experiment B'ye yeni scope eklendi:
+    - `experiment_b_model_comparison_best_layer.*`
+    - her modeli kendi en iyi dogrulanan katmaninda raporluyor
+    - sabit `common_index` fair-comparison ana raporu korunuyor
+- `scripts/run_generation.py` ve `scripts/run_smoke_gsm8k_pipeline.py`
+  - `model_metadata.json` ayri artefakt olarak da yaziliyor.
+- Repo docs
+  - README ve run guide parquet, `run_metadata.json`, `model_metadata.json`, `experiment_a_layer_comparison`, `experiment_b_model_comparison_best_layer` ciktilarini anlatacak sekilde guncellendi.
+  - `report/main.tex` eski single-layer / stale full-run anlatimindan cikartilip mevcut multi-layer validation durumuna cekildi.
+- Dependency
+  - `pyarrow` Poetry dependency olarak eklendi; parquet output artik repo seviyesinde resmi bir capability.
+
+**Decisions**
+- `Experiment B` primary scope'u degistirilmedi; best-layer view eklendi ama fair fixed-layer common-index raporu ana referans olarak korundu.
+- Parser tarafi yalnizca belirgin false-positive ailelerini hedefleyecek kadar dar tutuldu; gercek reasoning hatalarini "correct"e cevirecek agresif kurtarma uygulanmadi.
+- Reanalysis (`--input`) modunda model revision ancak mevcutsa preserve ediliyor; ciplak eski CSV tablolar icin model metadata minimum model-name seviyesinde kalabilir.
+
+**Validation**
+- Targeted regression:
+  - `poetry run pytest tests/test_step_parser.py tests/test_sympy_judge.py tests/test_ablation_reporting.py tests/test_generation_runner.py tests/test_early_warning.py tests/test_calibration.py`
+  - Sonuc: `60 passed`
+- Offline smoke (input-table path):
+  - `poetry run python scripts/run_ablation.py --experiment ALL --input results/_tmp_ablation_all_smoke/step_signal_table.csv --primary-k 20 --analysis-layer late --bootstrap-iters 10 --early-n 2 --out results/_tmp_ablation_repro_smoke`
+  - Sonuc:
+    - `ablation_summary.json` yazildi
+    - `run_metadata.json` yazildi
+    - `experiment_b_model_comparison_best_layer.csv` yazildi
+    - root/combined parquet output path'leri summary'ye girdi
+
+**Known Gaps / Risks**
+- `--input` ile sadece bare step table verildiginde root `model_metadata.json` dosyalari eski kaynaktan tasinmiyorsa revision bilgisi minimum seviyede kalabilir; tam reproducibility icin ayni run'in `models/*/model_metadata.json` dosyalari da korunmali.
+- Inline marker ayirma su an `split_steps(...)` seviyesinde; bozuk trace'lerde geometri boundary hizasi degil, en azindan parser/accounting kurtarimi hedefleniyor.
+- `report/main.tex` artik stale olmaktan cikti ama final full replay metrikleri degil, mevcut 200-sample multi-layer validation perspektifini anlatiyor.
+
+**Next Actions**
+- Run: guncel kodla yeni bir `200`-sample multi-layer validation al.
+- Build: ayni kosu icin parser failure bank'i yeniden uret.
+- Inspect:
+  - `experiment_a_layer_comparison.csv`
+  - `experiment_b_model_comparison_best_layer.csv`
+  - `run_metadata.json`
+- Decide: final replay icin sabit `analysis_layer` mi, yoksa reporting'de fixed-layer + best-layer cift gorunumu mu headline olacak, bunu dondur.

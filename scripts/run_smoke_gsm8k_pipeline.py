@@ -81,12 +81,19 @@ def main() -> None:
     )
     trace = generate_reasoning_trace(question, cfg)
     token_embeddings = np.asarray(trace.pop("token_embeddings", []), dtype=np.float32)
+    token_embeddings_by_layer = trace.pop("token_embeddings_by_layer", {})
 
     trace["dataset"] = {"name": "openai/gsm8k", "config": "main", "split": args.split, "index": args.index}
     trace["gold_answer"] = gold_answer
 
     generation_path = out_dir / "generation_trace.json"
     generation_path.write_text(json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8")
+    model_metadata = trace.get("model_metadata")
+    if isinstance(model_metadata, dict):
+        (out_dir / "model_metadata.json").write_text(
+            json.dumps(model_metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     judged_steps, judge_summary = build_step_judgements(
         trace.get("generated_text", ""),
@@ -101,6 +108,33 @@ def main() -> None:
 
     embeddings_path = out_dir / "token_embeddings.npy"
     np.save(embeddings_path, token_embeddings)
+    layer_metrics: dict[str, dict[str, object]] = {}
+    if isinstance(token_embeddings_by_layer, dict):
+        for layer_name, payload in token_embeddings_by_layer.items():
+            layer_embeddings = np.asarray(payload.get("embeddings", []), dtype=np.float32)
+            if layer_embeddings.ndim != 2:
+                continue
+            layer_path = out_dir / f"token_embeddings_{layer_name}.npy"
+            np.save(layer_path, layer_embeddings)
+            layer_summary: dict[str, object] = {
+                "layer_index": int(payload.get("layer_index", -1)),
+                "n_samples": int(layer_embeddings.shape[0]),
+                "n_features": int(layer_embeddings.shape[1]) if layer_embeddings.ndim == 2 else 0,
+            }
+            if layer_embeddings.shape[0] >= 3:
+                k_eff = max(2, min(args.k, int(layer_embeddings.shape[0]) - 1))
+                layer_summary.update(
+                    {
+                        "k_effective": int(k_eff),
+                        "lid_mle_mean": float(np.mean(lid_mle_batch(layer_embeddings, k=k_eff))),
+                        "twonn_global_id": float(twonn_global_id(layer_embeddings)),
+                        "abid_mean": float(np.mean(abid_local_batch(layer_embeddings, k=k_eff))),
+                        "participation_ratio": float(participation_ratio(layer_embeddings)),
+                    }
+                )
+            else:
+                layer_summary["status"] = "insufficient_samples_for_lid"
+            layer_metrics[str(layer_name)] = layer_summary
 
     metrics: dict[str, object] = {
         "n_samples": int(token_embeddings.shape[0]) if token_embeddings.ndim == 2 else 0,
@@ -108,6 +142,7 @@ def main() -> None:
         "k_requested": int(args.k),
         "judge_parse_fail_rate": judge_summary["parse_fail_rate"],
         "judge_correct_rate": judge_summary["correct_rate"],
+        "metrics_by_layer": layer_metrics,
     }
     if token_embeddings.ndim == 2 and token_embeddings.shape[0] >= 3:
         k_eff = max(2, min(args.k, int(token_embeddings.shape[0]) - 1))

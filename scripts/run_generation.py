@@ -43,11 +43,17 @@ def main() -> None:
     )
     trace = generate_reasoning_trace(args.prompt, cfg)
     token_embeddings = trace.pop("token_embeddings", None)
+    token_embeddings_by_layer = trace.pop("token_embeddings_by_layer", None)
 
     output_path = Path(args.out)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote generation trace to {output_path}")
+    model_metadata = trace.get("model_metadata")
+    if isinstance(model_metadata, dict):
+        metadata_path = output_path.with_name("model_metadata.json")
+        metadata_path.write_text(json.dumps(model_metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Wrote model metadata to {metadata_path}")
 
     if args.embeddings_out and token_embeddings is not None:
         embeddings = np.asarray(token_embeddings, dtype=np.float32)
@@ -55,6 +61,14 @@ def main() -> None:
         emb_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(emb_path, embeddings)
         print(f"Wrote token embeddings to {emb_path}")
+        if isinstance(token_embeddings_by_layer, dict):
+            for layer_name, payload in token_embeddings_by_layer.items():
+                layer_embeddings = np.asarray(payload.get("embeddings", []), dtype=np.float32)
+                if layer_embeddings.ndim != 2:
+                    continue
+                layer_path = emb_path.with_name(f"{emb_path.stem}_{layer_name}{emb_path.suffix}")
+                np.save(layer_path, layer_embeddings)
+                print(f"Wrote {layer_name} token embeddings to {layer_path}")
 
 
 if __name__ == "__main__":
